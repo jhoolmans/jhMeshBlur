@@ -1,0 +1,41 @@
+global proc AEjhMeshBlurTemplate ( string $nodeName )
+{
+editorTemplate -beginScrollLayout;
+editorTemplate -label "Envelope" -addControl "envelope";
+
+
+/* Shape */
+editorTemplate -beginLayout "Shape" -collapse 0;
+
+editorTemplate -label "Tweak mode" -addControl "TweakBlur";
+
+editorTemplate -label "Strength" -addControl "Strength";
+editorTemplate -label "Treshold" -addControl "Treshold";
+
+editorTemplate -endLayout;
+
+
+/* Interpolation */
+editorTemplate -beginLayout "Interpolation" -collapse 0;
+
+editorTemplate -label "Curved Interpolation" -addControl "QuadInterpolation";
+editorTemplate -label "Curve Strength" -addControl "InterpolationPower";
+
+editorTemplate -endLayout;
+
+/* time settings */
+editorTemplate -beginLayout "Time Settings" -collapse 0;
+
+editorTemplate -label "In Time" -addControl "time";
+
+editorTemplate -endLayout;
+
+/* other */
+// suppress these attributes
+editorTemplate -suppress "input";
+editorTemplate -suppress "weight";
+
+AEgeometryFilterCommon $nodeName;
+editorTemplate -addExtraControls;
+editorTemplate -endScrollLayout;
+}

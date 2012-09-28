@@ -1,0 +1,19 @@
+//
+//
+// By Jeroen Hoolmans
+// Date 08/02/2012
+//
+//
+global proc createMeshBlur()
+{
+	string $selection[] = `ls -sl -l`;
+	
+	if(size($selection) > 0)
+	{
+		$node = `deformer -type jhMeshBlur`;
+		
+		connectAttr time1.outTime ($node[0]+".time");
+	}
+}
+
+createMeshBlur;

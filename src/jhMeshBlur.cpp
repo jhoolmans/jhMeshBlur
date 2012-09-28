@@ -141,12 +141,15 @@ MStatus jhMeshBlur::initialize()
 
     aTime = unitAttr.create( "time", "tm", MFnUnitAttribute::kTime, 1.0 );
     unitAttr.setStorable(true);
-    unitAttr.setCached(false);
+    unitAttr.setCached(true);
+	unitAttr.setReadable(true);
+	unitAttr.setWritable(true);
+	unitAttr.setAffectsAppearance(true);
+	unitAttr.setAffectsWorldSpace(true);
 
     // Make the attributes visible to the user
     addAttribute( aStrength);
     addAttribute( aTreshhold);
-    addAttribute( aShapeFactor);
     addAttribute( aTime);
     addAttribute( aTweakBlur);
     addAttribute( aQuadInterp);
@@ -154,12 +157,11 @@ MStatus jhMeshBlur::initialize()
     addAttribute( aOldMeshData);
 
     // Make sure when an attribute changes, the node updates
-    attributeAffects( jhMeshBlur::aTime, jhMeshBlur::outputGeom );
-    attributeAffects( jhMeshBlur::aStrength, jhMeshBlur::outputGeom );
-    attributeAffects( jhMeshBlur::aTreshhold, jhMeshBlur::outputGeom );
-    attributeAffects( jhMeshBlur::aShapeFactor, jhMeshBlur::outputGeom );
-    attributeAffects( jhMeshBlur::aQuadInterp, jhMeshBlur::outputGeom );
-    attributeAffects( jhMeshBlur::aInterpPower, jhMeshBlur::outputGeom );
+    attributeAffects( aTime, outputGeom );
+	attributeAffects( aStrength, outputGeom );
+    attributeAffects( aTreshhold, outputGeom );
+    attributeAffects( aQuadInterp, outputGeom );
+    attributeAffects( aInterpPower, outputGeom );
 
     // Not implented yet, but make the weights paintable :)
     MGlobal::executeCommand("makePaintable -attrType multiFloat -sm deformer jhMeshBlur weights;");
@@ -180,7 +182,7 @@ double linearInterp(double given, double a, double b){
 MPoint quadInterpBetween(MPoint a, MPoint b, MPoint c, double t){
     MPoint EdgeA = a + ((b-a) * t);
     MPoint EdgeB = b + ((c-b) * t);
-
+	
     return EdgeA + (EdgeB - EdgeA) * t;
 }
 
@@ -193,29 +195,39 @@ MStatus jhMeshBlur::deform( MDataBlock& block,MItGeometry& iter,const MMatrix& m
 
     // Envelope
     float envData = block.inputValue(envelope, &returnStatus).asFloat();
+	CHECK_MSTATUS(returnStatus);
 
-    if(envData == 0){
-        return returnStatus;
-    }
+    if(envData == 0)
+		return MS::kFailure;
 
     /*
      VARIABLES
      */
     //float factor = block.inputValue(aShapeFactor, &returnStatus).asFloat();
     float fStrength = block.inputValue(aStrength, &returnStatus).asFloat();
+	CHECK_MSTATUS(returnStatus);
+	
+	if (fStrength == 0)
+		return MS::kFailure;
+	
     float fThreshold = block.inputValue(aTreshhold, &returnStatus).asFloat();
+	CHECK_MSTATUS(returnStatus);
     float fW = 0.0f; // weight
     float fDistance;
     fStrength *= envData;
 
     double dKracht = block.inputValue(aInterpPower, &returnStatus).asDouble();
+	CHECK_MSTATUS(returnStatus);
     double dDotProduct;  // Dotproduct of the point
 
     bool bTweakblur = block.inputValue(aTweakBlur, &returnStatus).asBool();
+	CHECK_MSTATUS(returnStatus);
+	
     bool bQuad = block.inputValue(aQuadInterp, &returnStatus).asBool();
-
-    MTime test(MAnimControl::currentTime());
-    int nTijd = (int)test.as(MTime::kFilm);
+	CHECK_MSTATUS(returnStatus);
+	
+	MTime inTime = block.inputValue(aTime).asTime();
+    int nTijd = (int)inTime.as(MTime::kFilm);
 
 
     MFloatVectorArray currentNormals;   // normals of mesh
@@ -239,21 +251,33 @@ MStatus jhMeshBlur::deform( MDataBlock& block,MItGeometry& iter,const MMatrix& m
 
     // get the previous mesh data
     MPlug oldMeshPlug = nodeFn.findPlug(MString("oldMesh"));
-    MPlug oldMeshPositionsAPlug = oldMeshPlug.elementByLogicalIndex(0);
-    MPlug oldMeshPositionsBPlug = oldMeshPlug.elementByLogicalIndex(1);
+    MPlug oldMeshPositionsAPlug = oldMeshPlug.elementByLogicalIndex((multiIndex*4) + 0);
+    MPlug oldMeshPositionsBPlug = oldMeshPlug.elementByLogicalIndex((multiIndex*4) + 1);
+    MPlug oldMeshPositionsCPlug = oldMeshPlug.elementByLogicalIndex((multiIndex*4) + 2); // cache for tweak mode
+    MPlug oldMeshPositionsDPlug = oldMeshPlug.elementByLogicalIndex((multiIndex*4) + 3); // cache for tweak mode
 
     // convert to MPointArrays
     MObject objOldMeshA;
     MObject objOldMeshB;
+    MObject objOldMeshC; // cache
+    MObject objOldMeshD; // cache
 
     oldMeshPositionsAPlug.getValue(objOldMeshA);
     oldMeshPositionsBPlug.getValue(objOldMeshB);
+    oldMeshPositionsCPlug.getValue(objOldMeshC); // cache
+    oldMeshPositionsDPlug.getValue(objOldMeshD); // cache
 
     fnPoints.setObject(objOldMeshA);
     MPointArray oldMeshPositionsA = fnPoints.array();
     
     fnPoints.setObject(objOldMeshB);
     MPointArray oldMeshPositionsB = fnPoints.array();
+    
+    fnPoints.setObject(objOldMeshC);
+    MPointArray oldMeshPositionsC = fnPoints.array(); // cache
+    
+    fnPoints.setObject(objOldMeshD);
+    MPointArray oldMeshPositionsD = fnPoints.array(); // cache
 
     
     
@@ -266,9 +290,17 @@ MStatus jhMeshBlur::deform( MDataBlock& block,MItGeometry& iter,const MMatrix& m
             // convert to world
             oldMeshPositionsA[i] = oldMeshPositionsA[i] * m;
         }
-
+		
         oldMeshPositionsB.copy(oldMeshPositionsA);
+        oldMeshPositionsC.copy(oldMeshPositionsA); // cache
+        oldMeshPositionsD.copy(oldMeshPositionsA); // cache
     }
+	
+	// get back old date again
+	if (bTweakblur == true) { // restore cache
+		oldMeshPositionsA.copy(oldMeshPositionsC);
+		oldMeshPositionsB.copy(oldMeshPositionsD);
+	}
     
     
     iter.allPositions(savedPoints);
@@ -319,14 +351,21 @@ MStatus jhMeshBlur::deform( MDataBlock& block,MItGeometry& iter,const MMatrix& m
         }
     }
     if(bTweakblur == false){
+        oldMeshPositionsD.copy(oldMeshPositionsB);
+        oldMeshPositionsC.copy(oldMeshPositionsA);
         oldMeshPositionsB.copy(oldMeshPositionsA);
         oldMeshPositionsA.copy(savedPoints);
 
         // Save back to plugs
         objOldMeshA = fnPoints.create(oldMeshPositionsA);
         objOldMeshB = fnPoints.create(oldMeshPositionsB);
+        objOldMeshC = fnPoints.create(oldMeshPositionsC);
+        objOldMeshD = fnPoints.create(oldMeshPositionsD);
+		
         oldMeshPositionsAPlug.setValue(objOldMeshA);
         oldMeshPositionsBPlug.setValue(objOldMeshB);
+        oldMeshPositionsCPlug.setValue(objOldMeshC);
+        oldMeshPositionsDPlug.setValue(objOldMeshD);
     }
     
     return returnStatus;
@@ -342,7 +381,7 @@ MStatus jhMeshBlur::deform( MDataBlock& block,MItGeometry& iter,const MMatrix& m
 MStatus initializePlugin( MObject obj )
 {
 	MStatus result;
-	MFnPlugin plugin( obj, "Jeroen Hoolmans", "0.65", "Any");
+	MFnPlugin plugin( obj, "Jeroen Hoolmans", "0.66", "Any");
 	result = plugin.registerNode( "jhMeshBlur", jhMeshBlur::id, jhMeshBlur::creator, jhMeshBlur::initialize, MPxNode::kDeformerNode );
 
 	return result;
